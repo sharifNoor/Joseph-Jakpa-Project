@@ -1,31 +1,27 @@
 /*******************************************************  Including   Libraies  ***********************************************************/
 #include <Arduino.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
 #include <driver/adc.h>
 #include <FunctionalInterrupt.h>
 #include <LoRa.h>
 #include <SPI.h>
 /*******************************************************     Defining Pins    ***********************************************************/
+#define BUTTON_PIN_BITMASK 0x200000000  // 2^33 in hex
 #define photoresistor 13  // D13 Pin ESP32 
-#define tiltSensor 17     // D17 Pin ESP32
+#define tiltSensor 4     // D4 Pin ESP32
 #define pushBtn1 15       // D15 Pin ESP32
 #define pushBtn2 12       // D12 Pin ESP32
 #define ss 5              // LoRa NSS pin
 #define rst 14            // LoRa Reset pin
 #define dio0 2            // LoRa Digital I/O 0
-
-WiFiClient espClient;
-PubSubClient client(espClient);
 /*******************************************************  Defining Veriables  ***********************************************************/
 int photoresistorValue;
 int pushBtn1Value;
 int pushBtn2Value;
-int counter = 0;
+//int counter = 0;
 String outgoing;              // outgoing message
 byte msgCount = 0;            // count of outgoing messages
-byte localAddress = 0xFF;     // address of this device
-byte destination = 0xBB;      // destination to send to
+byte localAddress = 0xBB;     // address of this device
+byte destination = 0xFF;      // destination to send to
 long lastSendTime = 0;        // last send time
 int interval = 2000;          // interval between sends
 int recipient;          // recipient address
@@ -35,24 +31,37 @@ byte incomingLength;    // incoming msg length
 String incoming;
 byte PushBTN1 = 0;
 byte PushBTN2 = 0;
-byte Latitude;
-byte Longitude;
-byte BatteryLevel_MCU2;
+//byte Latitude;
+//byte Longitude;
+//byte BatteryLevel_MCU2;
 byte BatteryLevel_MCU1;
 int TiltSensorMCU1;
 long lastMsg = 0;
 char msg[50];
 int value = 0;
 byte ActualMsg;
-// Replace the next variables with your SSID/Password combination
-const char* ssid = "REPLACE_WITH_YOUR_SSID";
-const char* password = "REPLACE_WITH_YOUR_PASSWORD";
-// Replace with your MQTT Broker Address
-const char* mqtt_server = "YOUR_MQTT_BROKER_ADDRESS";
 
+RTC_DATA_ATTR int bootCount = 0;
+/*******************************************************   Class & Functions   ***********************************************************/
+/*
+Method to print the reason by which ESP32
+has been awaken from sleep
+*/
+void print_wakeup_reason(){
+  esp_sleep_wakeup_cause_t wakeup_reason;
 
-/*******************************************************         Class        ***********************************************************/
+  wakeup_reason = esp_sleep_get_wakeup_cause();
 
+  switch(wakeup_reason)
+  {
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+}
 bool tilt_sensor() {
   Serial.println("Tilt Sensor value changed...!");
   // Will publish MQTT message from here on Tilt Sensor Value change
@@ -81,136 +90,80 @@ void sendMessage(String outgoing) {
   LoRa.write(outgoing.length());        // add payload length
   LoRa.write(PushBTN1);
   LoRa.write(PushBTN2);
+  LoRa.write(BatteryLevel_MCU1);
+  if(photoresistorValue < 350) {
+    LoRa.write(photoresistorValue);
+  }
   LoRa.print(outgoing);                 // add payload
   LoRa.endPacket();                     // finish packet and send it
   msgCount++;                           // increment message ID
 }
 
 //                                                              LoRa Receive Message
-void onReceive(int packetSize) {
-  if (packetSize == 0) return;          // if there's no packet, return
-
-  // read packet header bytes:
-  recipient = LoRa.read();          // recipient address
-  sender = LoRa.read();            // sender address
-  incomingMsgId = LoRa.read();     // incoming msg ID
-  incomingLength = LoRa.read();    // incoming msg length
-  Latitude = LoRa.read();
-  Longitude = LoRa.read();
-  BatteryLevel_MCU2 = LoRa.read();
-  ActualMsg = LoRa.read();
-  incoming = "";
-
-  while (LoRa.available()) {
-    incoming += (char)LoRa.read();
-  }
-
-  if (incomingLength != incoming.length()) {   // check length for error
-    Serial.println("error: message length does not match length");
-    return;                             // skip rest of function
-  }
-
-  // if the recipient isn't this device or broadcast,
-  if (recipient != localAddress && recipient != 0xFF) {
-    Serial.println("This message is not for me.");
-    return;                             // skip rest of function
-  }
-
-  // if message is for this device, or broadcast, print details:
-//  Serial.println("Received from: 0x" + String(sender, HEX));
-//  Serial.println("Sent to: 0x" + String(recipient, HEX));
-//  Serial.println("Message ID: " + String(incomingMsgId));
-//  Serial.println("Message length: " + String(incomingLength));
-//  Serial.println("Message: " + incoming);
-//  Serial.println("RSSI: " + String(LoRa.packetRssi()));
-//  Serial.println("Snr: " + String(LoRa.packetSnr()));
-//  Serial.println();
-
-  char LatitudeString[8];
-  char LongitudeString[8];
-  char BatteryLevel_MCU2String[8];
-  char ActualMsgString[8];
-  char BatteryLevel_MCU1String[8];
-  char TiltSensorMCU1String[8];
-  char photoresistorValueString[8];
-
-  dtostrf(Latitude, 1, 2, LatitudeString);
-  dtostrf(Longitude, 1, 2, LongitudeString);
-  dtostrf(BatteryLevel_MCU2, 1, 2, BatteryLevel_MCU2String);
-  dtostrf(ActualMsg, 1, 2, ActualMsgString);
-  dtostrf(BatteryLevel_MCU1, 1, 2, BatteryLevel_MCU1String);
-  dtostrf(TiltSensorMCU1, 1, 2, TiltSensorMCU1String);
-  dtostrf(photoresistorValue, 1, 2, photoresistorValueString);
-
-  client.publish("esp32/Latitude", LatitudeString);
-  client.publish("esp32/Longitude", LongitudeString);
-  client.publish("esp32/BatteryLevel_MCU2", BatteryLevel_MCU2String);
-  client.publish("esp32/ActualMsg", ActualMsgString);
-  client.publish("esp32/BatteryLevel_MCU1", BatteryLevel_MCU1String);
-  client.publish("esp32/TiltSensorMCU1", TiltSensorMCU1String);
-  client.publish("esp32/photoresistorValue", photoresistorValueString);
-  
-}
-
-void setup_wifi() {
-  delay(10);
-  // We start by connecting to a WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-}
-
-void callback(char* topic, byte* message, unsigned int length) {
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
-  String messageTemp;
-  
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)message[i]);
-    messageTemp += (char)message[i];
-  }
-  Serial.println();
-
-  // Feel free to add more if statements to control more GPIOs with MQTT
-
-  // If a message is received on the topic esp32/output, you check if the message is either "on" or "off". 
-  // Changes the output state according to the message
-  if (String(topic) == "esp32/output") {
-    Serial.print("Changing output to ");
-  }
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (client.connect("ESP8266Client")) {
-      Serial.println("connected");
-      // Subscribe
-      client.subscribe("esp32/output");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
+//void onReceive(int packetSize) {
+//  if (packetSize == 0) return;          // if there's no packet, return
+//
+//  // read packet header bytes:
+//  recipient = LoRa.read();          // recipient address
+//  sender = LoRa.read();            // sender address
+//  incomingMsgId = LoRa.read();     // incoming msg ID
+//  incomingLength = LoRa.read();    // incoming msg length
+////  Latitude = LoRa.read();
+////  Longitude = LoRa.read();
+////  BatteryLevel_MCU2 = LoRa.read();
+//  ActualMsg = LoRa.read();
+//  incoming = "";
+//
+//  while (LoRa.available()) {
+//    incoming += (char)LoRa.read();
+//  }
+//
+//  if (incomingLength != incoming.length()) {   // check length for error
+//    Serial.println("error: message length does not match length");
+//    return;                             // skip rest of function
+//  }
+//
+//  // if the recipient isn't this device or broadcast,
+//  if (recipient != localAddress && recipient != 0xFF) {
+//    Serial.println("This message is not for me.");
+//    return;                             // skip rest of function
+//  }
+//
+//  // if message is for this device, or broadcast, print details:
+////  Serial.println("Received from: 0x" + String(sender, HEX));
+////  Serial.println("Sent to: 0x" + String(recipient, HEX));
+////  Serial.println("Message ID: " + String(incomingMsgId));
+////  Serial.println("Message length: " + String(incomingLength));
+////  Serial.println("Message: " + incoming);
+////  Serial.println("RSSI: " + String(LoRa.packetRssi()));
+////  Serial.println("Snr: " + String(LoRa.packetSnr()));
+////  Serial.println();
+//
+////  char LatitudeString[8];
+////  char LongitudeString[8];
+////  char BatteryLevel_MCU2String[8];
+////  char ActualMsgString[8];
+////  char BatteryLevel_MCU1String[8];
+////  char TiltSensorMCU1String[8];
+////  char photoresistorValueString[8];
+////
+////  dtostrf(Latitude, 1, 2, LatitudeString);
+////  dtostrf(Longitude, 1, 2, LongitudeString);
+////  dtostrf(BatteryLevel_MCU2, 1, 2, BatteryLevel_MCU2String);
+////  dtostrf(ActualMsg, 1, 2, ActualMsgString);
+////  dtostrf(BatteryLevel_MCU1, 1, 2, BatteryLevel_MCU1String);
+////  dtostrf(TiltSensorMCU1, 1, 2, TiltSensorMCU1String);
+////  dtostrf(photoresistorValue, 1, 2, photoresistorValueString);
+////
+////  client.publish("esp32/Latitude", LatitudeString);
+////  client.publish("esp32/Longitude", LongitudeString);
+////  client.publish("esp32/BatteryLevel_MCU2", BatteryLevel_MCU2String);
+////  client.publish("esp32/ActualMsg", ActualMsgString);
+////  client.publish("esp32/BatteryLevel_MCU1", BatteryLevel_MCU1String);
+////  client.publish("esp32/TiltSensorMCU1", TiltSensorMCU1String);
+////  client.publish("esp32/photoresistorValue", photoresistorValueString);
+//  
+//}
 
 //                                                               Battery Percentage Function
 float battery_read()
@@ -292,10 +245,13 @@ Button push_Btn_two(pushBtn2);
 void setup() {
   Serial.begin(115200);
   while (!Serial);
+  
+  ++bootCount;
+  Serial.println("Boot number: " + String(bootCount));
 
-  setup_wifi();
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
+  //Print the wakeup reason for ESP32
+  print_wakeup_reason();
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,1); //1 = High, 0 = Low
   
  // Battery Percentage Code Init.
   adc1_config_width(ADC_WIDTH_12Bit);
@@ -329,26 +285,18 @@ void loop() {
 //  Serial.println(battery_read(), 2);
   BatteryLevel_MCU1 = battery_read(), 2;
 
-  
-  
-  if (photoresistorValue > 350){
-    // Will publish MQTT message from here on Photoresistor Threshold drop
-  }
-
-  if (!client.connected()) {
-      reconnect();
-  }
-  client.loop();
-
 //------------------------------------------------------------------ Code for Sending data to MCU-1 --------------------------------------------------------------// 
-  String message = String(Latitude) + String(Longitude) + String(BatteryLevel_MCU2) + String(ActualMsg);
+  String message = String(PushBTN1) + String(PushBTN2) + String(BatteryLevel_MCU1) + String(photoresistorValue);
   sendMessage(message);
 //------------------------------------------------------------------------------- End ----------------------------------------------------------------------------// 
 
 //---------------------------------------------------------------- Code for Receiving data From MCU-1 ------------------------------------------------------------//
   // parse for a packet, and call onReceive with the result:
-  onReceive(LoRa.parsePacket());
+//  onReceive(LoRa.parsePacket());
 //------------------------------------------------------------------------------- End ----------------------------------------------------------------------------// 
   
   delay(1000);
+  
+  // Setting to Deep Sleep mode...!
+  esp_deep_sleep_start();
 }
