@@ -1,0 +1,19 @@
+MCU - 1:
+
+Photoresistor 	- On Threshold drop publish MQTT message
+Tilt Sensor 	- OnChange publish MQTT message
+Push Btn 1 	- OnPress (Servo MCU-2) snaps into place
+Push Btn 2 	- OnPress (Laser Diode MCU-2) High
+BMS		- have to send battery %age with every MQTT message
+
+MCU - 2:
+
+Laser Diode 	- Depands on (MCU-1 Push Btn 1) Press
+Servo 		- Depands on (MCU-1 Push Btn 2) Press
+Tilt Sensor	- OnChange publish MQTT message
+Photoresistor	- On Threshold drop publish MQTT message
+Deep Sleep	- Wakes up when Photoresistor's threshold drops
+BMS		- have to send battery %age with every MQTT message
+GPS		- have to send GPS Cordinates with every MQTT message
+
+* Communication between both the MCUs will be through LoRa
